@@ -1,0 +1,51 @@
+# tools.py - public API wrapper — USGS Water Services 
+
+import requests
+from typing import Optional, Union
+
+USGS_BASE = "https://waterservices.usgs.gov/nwis/iv/"  # instant values endpoint
+
+
+def call_usgs_iv(site: str, parameterCd: Optional[str] = None, startDT: Optional[str] = None, endDT: Optional[str] = None):
+    """
+    Simple wrapper to fetch instantaneous values for a USGS site.
+    - site: site id (string)
+    - parameterCd: USGS parameter code (e.g., '00060' for discharge)
+    - startDT, endDT: ISO datetimes (optional)
+
+    Returns the JSON response (or raises).
+    """
+    params = {"sites": site, "format": "json"}
+    if parameterCd:
+        params['parameterCd'] = parameterCd
+    if startDT:
+        params['startDT'] = startDT
+    if endDT:
+        params['endDT'] = endDT
+
+    resp = requests.get(USGS_BASE, params=params, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+
+# A simple router that checks a question for API-worthy intent
+API_KEYWORDS = ["site","station","gage","gauge","flow","discharge","parameter","usgs","streamflow"]
+
+def should_call_usgs(question: str) -> bool:
+    q = question.lower()
+    return any(k in q for k in API_KEYWORDS)
+
+
+# validate API response
+def validate_usgs_streamflow(site_id: str) -> Union[float, str]:
+    """
+    Fetches the latest streamflow (parameterCd=00060) for a site and returns the numeric value.
+    If it cannot parse, returns an error message.
+    """
+    try:
+        data = call_usgs_iv(site_id, parameterCd="00060")
+        ts = data["value"]["timeSeries"][0]
+        val = ts["values"][0]["value"][0]["value"]
+        return float(val)
+    except Exception as e:
+        return f"Validation failed: {e}"
