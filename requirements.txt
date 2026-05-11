@@ -1,0 +1,14 @@
+streamlit
+faiss-cpu
+sentence-transformers
+numpy
+scikit-learn
+requests
+openai
+PyPDF2
+tqdm
+python-dotenv
+#nltk
+#ragas
+rouge-score
+bert-score
