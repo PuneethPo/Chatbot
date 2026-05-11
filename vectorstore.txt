@@ -1,0 +1,55 @@
+# vector store 
+
+# vector_store.py (load/query FAISS index)
+
+# vector_store.py (load/query FAISS index)
+
+import faiss
+import os
+import pickle
+from sentence_transformers import SentenceTransformer
+import numpy as np
+
+EMB_MODEL = "all-mpnet-base-v2"
+
+class VectorStore:
+    def __init__(self, index_dir='faiss_index'):
+        """
+        Load FAISS index + metadata created by ingest.py.
+        """
+        self.index_dir = index_dir
+
+        # Load FAISS index
+        index_path = os.path.join(index_dir, 'index.faiss')
+        if not os.path.exists(index_path):
+            raise FileNotFoundError(f"FAISS index not found at {index_path}")
+        self.index = faiss.read_index(index_path)
+
+        # Load metadata
+        metadata_path = os.path.join(index_dir, 'metadata.pkl')
+        if not os.path.exists(metadata_path):
+            raise FileNotFoundError(f"Metadata not found at {metadata_path}")
+        with open(metadata_path, 'rb') as f:
+            data = pickle.load(f)
+
+        self.texts = data['texts']
+        self.metadatas = data['metadatas']
+        self.model = SentenceTransformer(EMB_MODEL)
+
+    def query(self, q: str, k=5):
+        """
+        Query FAISS index and return top-k results with metadata + similarity score.
+        """
+        emb = self.model.encode([q], convert_to_numpy=True)
+        D, I = self.index.search(emb, k)
+
+        results = []
+        for idx, dist in zip(I[0], D[0]):
+            if idx < 0 or idx >= len(self.texts):
+                continue
+            results.append({
+                'text': self.texts[idx],
+                'metadata': self.metadatas[idx],
+                'score': float(dist)
+            })
+        return results

@@ -1,0 +1,90 @@
+# agent.py - SimpleAgent without NLTK
+import re
+from dotenv import load_dotenv
+import os
+from openai import AzureOpenAI
+import json
+from vector_store import VectorStore
+from tools import call_usgs_iv, should_call_usgs
+
+# Load environment variables
+load_dotenv()
+
+# Azure OpenAI credentials
+AZURE_OPENAI_ENDPOINT = os.getenv("ENDPOINT_URL")
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_DEPLOYMENT = os.getenv("DEPLOYMENT_NAME")
+AZURE_OPENAI_API_VERSION = os.getenv("API_VERSION")
+
+# Initialize Azure client
+client = AzureOpenAI(
+    api_key=AZURE_OPENAI_API_KEY,
+    api_version=AZURE_OPENAI_API_VERSION,
+    azure_endpoint=AZURE_OPENAI_ENDPOINT,
+)
+
+# --- Helper: simple sentence split without nltk ---
+def truncate_sentences(text: str, max_sentences: int = 4) -> str:
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    if len(sentences) > max_sentences:
+        return " ".join(sentences[:max_sentences])
+    return text
+
+class SimpleAgent:
+    def __init__(self, vs: VectorStore = None):
+        self.vs = vs
+
+    def answer(self, question: str, return_context: bool = False):
+        # Retrieve top passages
+        if self.vs:
+            retrieved = self.vs.query(question, k=4)
+            passages = "\n---\n".join([r['text'] for r in retrieved]) if retrieved else ""
+        else:
+            retrieved, passages = [], ""
+
+        # Check if question needs USGS API
+        api_response = None
+        if should_call_usgs(question):
+            m = re.search(r"\b(\d{3,})\b", question)
+            if m:
+                site = m.group(1)
+                try:
+                    api_response = call_usgs_iv(site)
+                except Exception as e:
+                    api_response = {"error": str(e)}
+            else:
+                api_response = {"hint": "No site id detected. Provide numeric site id (e.g., 01234567)."}
+
+        # Prepare prompt for Azure OpenAI
+        system_msg = "You are an expert water resources assistant."
+        user_msg = (
+            f"Answer the question concisely in 3-4 sentences. "
+            f"Use complete sentences. Be clear and paragraph-style.\n\n"
+            f"Question: {question}\n\n"
+            f"Passages:\n{passages}\n\n"
+            f"API:\n{json.dumps(api_response) if api_response else 'None'}"
+        )
+
+        # Azure OpenAI chat completion
+        try:
+            completion = client.chat.completions.create(
+                model=AZURE_OPENAI_DEPLOYMENT,
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": user_msg},
+                ],
+                max_tokens=300,
+                temperature=0.0,
+            )
+            answer = completion.choices[0].message.content.strip()
+            answer = truncate_sentences(answer, max_sentences=4)
+        except Exception as e:
+            answer = f"Error calling Azure OpenAI: {e}"
+
+        # Truncate RAG context
+        if passages:
+            passages = truncate_sentences(passages, max_sentences=4)
+
+        if return_context:
+            return answer, passages
+        return answer
